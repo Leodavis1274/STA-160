@@ -9,7 +9,6 @@ from sklearn.svm import SVR
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
-from sklearn.model_selection import GridSearchCV
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import joblib
 
@@ -164,7 +163,7 @@ def build_monthly_dataset() -> Tuple[pd.DataFrame, List[str], List[str]]:
     for col in ["total_std_qty", "total_tx_qty", "avg_std_price", "num_trades"]:
         data[col] = data[col].fillna(0.0)
 
-    # Feature engineering
+    # Feature engineering: lags, calendar, targets
     for lag in range(1, 5):
         data[f"lag_{lag}"] = data["weighted_avg_price"].shift(lag)
 
@@ -220,37 +219,32 @@ def train_forecast_models() -> Dict[str, object]:
     X_test = data.loc[test_mask, feature_cols]
     y_test = data.loc[test_mask, target_cols]
 
+    # ------------------------------------------------------------------
+    # Scaling
+    # ------------------------------------------------------------------
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
+    # ------------------------------------------------------------------
     # Baseline SVR
+    # ------------------------------------------------------------------
     base_svr = MultiOutputRegressor(SVR(kernel="rbf"))
     base_svr.fit(X_train_scaled, y_train)
     y_pred_base = base_svr.predict(X_test_scaled)
 
-    # Tuned SVR
-    svr = SVR(kernel="rbf")
-    multi_svr = MultiOutputRegressor(svr)
-
-    param_grid = {
-        "estimator__C": [0.1, 1, 10],
-        "estimator__epsilon": [0.1, 0.5, 1.0],
-        "estimator__gamma": ["scale", 0.01, 0.1],
-    }
-
-    grid = GridSearchCV(
-        multi_svr,
-        param_grid,
-        cv=3,
-        scoring="neg_mean_absolute_error",
-        n_jobs=-1,
+    # ------------------------------------------------------------------
+    # "Tuned" SVR without GridSearchCV
+    # ------------------------------------------------------------------
+    best_svr = MultiOutputRegressor(
+        SVR(kernel="rbf", C=10.0, epsilon=0.1, gamma="scale")
     )
-    grid.fit(X_train_scaled, y_train)
-    best_svr = grid.best_estimator_
+    best_svr.fit(X_train_scaled, y_train)
     y_pred_svr = best_svr.predict(X_test_scaled)
 
+    # ------------------------------------------------------------------
     # Random Forest
+    # ------------------------------------------------------------------
     rf = RandomForestRegressor(
         n_estimators=500,
         max_depth=None,
@@ -261,6 +255,9 @@ def train_forecast_models() -> Dict[str, object]:
     multi_rf.fit(X_train, y_train)
     y_pred_rf = multi_rf.predict(X_test)
 
+    # ------------------------------------------------------------------
+    # Metrics summary
+    # ------------------------------------------------------------------
     def summarize_model(name: str, y_pred: np.ndarray) -> Dict[str, float]:
         mae = mean_absolute_error(y_test, y_pred, multioutput="raw_values")
         rmse = np.sqrt(mean_squared_error(y_test, y_pred, multioutput="raw_values"))
@@ -282,7 +279,9 @@ def train_forecast_models() -> Dict[str, object]:
     ]
     comparison_df = pd.DataFrame(rows)
 
+    # ------------------------------------------------------------------
     # Rolling backtest (Ridge) for target_1
+    # ------------------------------------------------------------------
     X_all = data[feature_cols].values
     y_all = data["target_1"].values
     period_all = data["period"].values
@@ -320,7 +319,9 @@ def train_forecast_models() -> Dict[str, object]:
     )
     avg_mae_bt = float(np.mean(mae_bt)) if mae_bt else np.nan
 
+    # ------------------------------------------------------------------
     # 12-month ahead forecast
+    # ------------------------------------------------------------------
     horizon = 12
     last_period = pd.to_datetime(data["period"].iloc[-1])
     last_row = data.iloc[-1]
@@ -387,7 +388,7 @@ def train_forecast_models() -> Dict[str, object]:
         "backtest_df": backtest_df,
         "avg_backtest_mae": avg_mae_bt,
         "future_df": future_df,
-        # Models + scaler so you can use them later (e.g. scenario lab)
+        # Models + scaler for scenario / risk pages
         "scaler": scaler,
         "svr_model": best_svr,
         "rf_model": multi_rf,
@@ -397,7 +398,7 @@ def train_forecast_models() -> Dict[str, object]:
 
 
 # -------------------------------------------------------------------------
-# Dash-facing helper
+# Dash-facing helper: load frozen artifacts if available
 # -------------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
@@ -405,33 +406,104 @@ def get_forecast_dashboard_data() -> Dict[str, object]:
     """
     Load forecast results (and models) for Dash.
 
-    If a pretrained artifact exists on disk, load it.
-    Otherwise, train the models on the fly and (if possible) save them.
+    Preferred path (for Render):
+      - Load precomputed CSVs and a small models .joblib from DATA_DIR.
+
+    Fallback (for local dev if CSVs/joblib missing):
+      - Train models on the fly via train_forecast_models().
     """
-    models_path = os.path.join(DATA_DIR, "forecast_models.joblib")
+    data_path = os.path.join(DATA_DIR, "forecast_data.csv")
+    comp_path = os.path.join(DATA_DIR, "forecast_comparison.csv")
+    bt_path = os.path.join(DATA_DIR, "forecast_backtest.csv")
+    fut_path = os.path.join(DATA_DIR, "forecast_future.csv")
+    models_path = os.path.join(DATA_DIR, "forecast_models_small.joblib")
 
-    # 1) Try loading a pre-trained artifact
-    if os.path.exists(models_path):
-        try:
-            return joblib.load(models_path)
-        except Exception as e:
-            print(
-                f"[model.py] Warning: could not load pretrained artifact at "
-                f"{models_path}: {e}. Retraining instead..."
-            )
+    # -----------------------------
+    # 1) Preferred: load frozen artifacts
+    # -----------------------------
+    if all(os.path.exists(p) for p in [data_path, comp_path, bt_path, fut_path, models_path]):
+        print("[model.py] Loading frozen forecast CSVs and small model bundle...")
 
-    # 2) Fallback: train on the fly
-    print(f"[model.py] No usable pretrained artifact at {models_path}. Training models now...")
-    result = train_forecast_models()
+        data = pd.read_csv(data_path)
+        comparison_df = pd.read_csv(comp_path)
+        backtest_df = pd.read_csv(bt_path)
+        future_df = pd.read_csv(fut_path)
 
-    # Try to save for future use (local dev, or if filesystem allows writes)
-    try:
-        os.makedirs(DATA_DIR, exist_ok=True)
-        joblib.dump(result, models_path)
-        print(f"[model.py] Saved trained models to {models_path}")
-    except Exception as e:
-        print(
-            f"[model.py] Warning: could not save model artifact to {models_path}: {e}"
-        )
+        # Ensure date columns are datetime where needed
+        if "period" in backtest_df.columns:
+            backtest_df["period"] = pd.to_datetime(backtest_df["period"])
+        if "period" in future_df.columns:
+            future_df["period"] = pd.to_datetime(future_df["period"])
 
-    return result
+        models_small = joblib.load(models_path)
+        scaler = models_small["scaler"]
+        svr_model = models_small["svr_model"]
+        rf_model = models_small["rf_model"]
+        feature_cols = models_small["feature_cols"]
+        target_cols = models_small["target_cols"]
+
+        # Reconstruct train/test split (same logic as training)
+        all_periods = sorted(data["period"].unique())
+        if len(all_periods) >= 24:
+            test_periods = all_periods[-12:]
+            train_periods = all_periods[:-12]
+        else:
+            # Fallback if data is shorter for some reason
+            split_idx = max(1, int(0.8 * len(all_periods)))
+            train_periods = all_periods[:split_idx]
+            test_periods = all_periods[split_idx:]
+
+        train_mask = data["period"].isin(train_periods)
+        test_mask = data["period"].isin(test_periods)
+
+        X_train = data.loc[train_mask, feature_cols]
+        y_train = data.loc[train_mask, target_cols]
+        X_test = data.loc[test_mask, feature_cols]
+        y_test = data.loc[test_mask, target_cols]
+
+        # Rebuild baseline SVR cheaply for y_pred_test (does NOT affect frozen results)
+        X_train_scaled = scaler.transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
+
+        base_svr = MultiOutputRegressor(SVR(kernel="rbf"))
+        base_svr.fit(X_train_scaled, y_train)
+        y_pred_base = base_svr.predict(X_test_scaled)
+
+        # Predictions from tuned SVR and RF using frozen models
+        y_pred_svr = svr_model.predict(X_test_scaled)
+        y_pred_rf = rf_model.predict(X_test)
+
+        avg_mae_bt = float(backtest_df["mae"].mean()) if not backtest_df.empty else np.nan
+
+        result: Dict[str, object] = {
+            "data": data,
+            "feature_cols": feature_cols,
+            "target_cols": target_cols,
+            "train_periods": train_periods,
+            "test_periods": test_periods,
+            "train_mask": train_mask,
+            "test_mask": test_mask,
+            "X_train": X_train,
+            "X_test": X_test,
+            "y_train": y_train,
+            "y_test": y_test,
+            "y_pred_test": {
+                "SVR_baseline": y_pred_base,
+                "SVR_tuned": y_pred_svr,
+                "RandomForest": y_pred_rf,
+            },
+            "comparison_df": comparison_df,
+            "backtest_df": backtest_df,
+            "avg_backtest_mae": avg_mae_bt,
+            "future_df": future_df,
+            "scaler": scaler,
+            "svr_model": svr_model,
+            "rf_model": rf_model,
+        }
+        return result
+
+    # -----------------------------
+    # 2) Fallback: train on the fly (local dev)
+    # -----------------------------
+    print("[model.py] Frozen artifacts not found. Training models now...")
+    return train_forecast_models()
