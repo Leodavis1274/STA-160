@@ -11,9 +11,6 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-# -------------------------------------------------------------------------
-# Paths
-# -------------------------------------------------------------------------
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -21,10 +18,6 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 CLEAN_MASTER_PATH = os.path.join(DATA_DIR, "EQR_master_clean_new.csv")
 OUTPUT_MASTER_PATH = os.path.join(DATA_DIR, "EQR_master_output_new.csv")
 
-
-# -------------------------------------------------------------------------
-# Shared loader for other pages
-# -------------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
 def load_master() -> pd.DataFrame:
@@ -34,6 +27,9 @@ def load_master() -> pd.DataFrame:
     On Render (or any constrained environment), you can cap the number of
     rows loaded by setting the MAX_EQR_ROWS environment variable. Locally,
     if MAX_EQR_ROWS is not set, the full file is loaded.
+
+    To save memory and speed up I/O, we also restrict to the columns the
+    app actually uses via `usecols`.
     """
     if not os.path.exists(CLEAN_MASTER_PATH):
         raise FileNotFoundError(
@@ -41,20 +37,48 @@ def load_master() -> pd.DataFrame:
             "Place EQR_master_clean_new.csv in the dashboard/data folder."
         )
 
-    # Allow row cap via env var to avoid OOM on Render
+    # 🔹 Columns actually used by the app (modeling + risk/EDA basics)
+    needed_cols = [
+        # IDs / grouping
+        "transaction_unique_id",
+        "trade_date_year_mo",
+
+        # dates (for datetime, year, month logic)
+        "transaction_begin_date",
+        "transaction_end_date",
+        "begin_date",
+        "delivery_month",
+
+        # quantities / prices / charge
+        "standardized_quantity",
+        "transaction_quantity",
+        "standardized_price",
+        "total_transaction_charge",
+
+        # OPTIONAL: add more if your EDA/risk pages need them, e.g.:
+        # "product",
+        # "class_name",
+        # "time_zone",
+        # "point_of_delivery_balancing_authority",
+    ]
+
+    # Allow row cap via env var (Render safety) + only load needed columns
     max_rows_env = os.environ.get("MAX_EQR_ROWS")
-    read_kwargs = {"low_memory": False}
+    read_kwargs = {
+        "low_memory": False,
+        "usecols": needed_cols,
+    }
 
     if max_rows_env:
         try:
             read_kwargs["nrows"] = int(max_rows_env)
         except ValueError:
-            # If the env var is not an int, just ignore and load full file
+            # If the env var is not an int, ignore it and load all rows
             pass
 
     df = pd.read_csv(CLEAN_MASTER_PATH, **read_kwargs)
 
-    # Choose a date column
+    # Choose a date column for the derived datetime field
     dt = None
     for col in ["begin_date", "transaction_begin_date", "transaction_end_date", "delivery_month"]:
         if col in df.columns:
@@ -89,6 +113,7 @@ def load_master() -> pd.DataFrame:
     df["month_cos"] = np.cos(2 * np.pi * df["month"] / 12.0)
 
     return df
+
 
 
 # -------------------------------------------------------------------------
@@ -250,7 +275,7 @@ def train_forecast_models() -> Dict[str, object]:
 
     # Random Forest
     rf = RandomForestRegressor(
-        n_estimators=200,
+        n_estimators=100,
         max_depth=None,
         random_state=42,
         n_jobs=-1,
@@ -287,7 +312,7 @@ def train_forecast_models() -> Dict[str, object]:
     period_all = data["period"].values
 
     window = 36
-    step = 1
+    step = 6
 
     mae_bt: List[float] = []
     dates_bt: List[str] = []
@@ -459,7 +484,7 @@ def get_forecast_dashboard_data() -> Dict[str, object]:
 
         rf_model = MultiOutputRegressor(
             RandomForestRegressor(
-                n_estimators=200,
+                n_estimators=100,
                 max_depth=None,
                 random_state=42,
                 n_jobs=-1,
