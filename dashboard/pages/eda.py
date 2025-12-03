@@ -3,12 +3,14 @@ from dash import html, dcc
 import pandas as pd
 import plotly.graph_objects as go
 from pathlib import Path
+from functools import lru_cache
 
 dash.register_page(__name__, path="/eda", name="Exploratory Analysis")
 
 # -------------------------------------------------------------------------
 # Helpers
 # -------------------------------------------------------------------------
+
 
 def _empty_fig(message="No data available"):
     fig = go.Figure()
@@ -57,6 +59,8 @@ except Exception as e:
 # Build animated figure: trade month on x, delivery month on slider
 # -------------------------------------------------------------------------
 
+
+@lru_cache(maxsize=1)
 def build_delivery_animation_figure():
     """
     Animated dual-axis chart:
@@ -64,6 +68,8 @@ def build_delivery_animation_figure():
     - left y-axis: weighted_avg_price
     - right y-axis: total_transacted_quantity
     - frames/slider: each frame is one delivery_year_mo
+
+    Cached so we only pay the cost of building all frames once per process.
     """
     if df.empty:
         return _empty_fig("No EDA data available for animation.")
@@ -244,36 +250,39 @@ def build_delivery_animation_figure():
     return fig
 
 
-# Build once at import (static dataset)
-animated_fig = build_delivery_animation_figure()
-
 # -------------------------------------------------------------------------
 # Layout: ONLY the new EDA animated graph
 # -------------------------------------------------------------------------
 
-layout = html.Div(
-    style={"maxWidth": "1200px", "margin": "16px auto 32px auto", "padding": "0 16px"},
-    children=[
-        html.Div(
-            className="glass-card",
-            children=[
-                html.H2(
-                    "Exploratory analysis: delivery-month animation",
-                    style={"marginBottom": "6px"},
-                ),
-                html.P(
-                    "Each frame shows a single delivery month. Use the slider or Play button "
-                    "to see how trades build up across trade months.",
-                    className="text-muted",
-                    style={"fontSize": "0.9rem", "marginBottom": "12px"},
-                ),
-                dcc.Graph(
-                    id="eda-animated-delivery",
-                    className="dash-graph",
-                    style={"height": "500px"},
-                    figure=animated_fig,
-                ),
-            ],
-        )
-    ],
-)
+
+def layout():
+    return html.Div(
+        style={
+            "maxWidth": "1200px",
+            "margin": "16px auto 32px auto",
+            "padding": "0 16px",
+        },
+        children=[
+            html.Div(
+                className="glass-card",
+                children=[
+                    html.H2(
+                        "Exploratory analysis: delivery-month animation",
+                        style={"marginBottom": "6px"},
+                    ),
+                    html.P(
+                        "Each frame shows a single delivery month. Use the slider or Play button "
+                        "to see how trades build up across trade months.",
+                        className="text-muted",
+                        style={"fontSize": "0.9rem", "marginBottom": "12px"},
+                    ),
+                    dcc.Graph(
+                        id="eda-animated-delivery",
+                        className="dash-graph",
+                        style={"height": "500px"},
+                        figure=build_delivery_animation_figure(),
+                    ),
+                ],
+            )
+        ],
+    )

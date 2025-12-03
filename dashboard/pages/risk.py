@@ -3,6 +3,7 @@ from dash import html, dcc, Input, Output, callback
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+from functools import lru_cache
 
 from model import load_master
 
@@ -10,44 +11,71 @@ dash.register_page(__name__, path="/risk", name="Risk Analysis")
 
 # --- Data preparation -----------------------------------------------------
 
-try:
-    df = load_master()
 
-    # Ensure datetime column
-    if "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    else:
-        dt_cols = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
-        if dt_cols:
-            df["datetime"] = pd.to_datetime(df[dt_cols[0]], errors="coerce")
+@lru_cache(maxsize=1)
+def get_risk_data():
+    """
+    Lazily load and preprocess the master EQR data used by the risk page.
+
+    Runs once per process thanks to lru_cache; subsequent calls are free.
+    Returns (df, price_col).
+    """
+    try:
+        df = load_master()
+
+        # Ensure datetime column
+        if "datetime" in df.columns:
+            df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
         else:
-            df["datetime"] = pd.NaT
+            dt_cols = [
+                c for c in df.columns if "date" in c.lower() or "time" in c.lower()
+            ]
+            if dt_cols:
+                df["datetime"] = pd.to_datetime(df[dt_cols[0]], errors="coerce")
+            else:
+                df["datetime"] = pd.NaT
 
-    df = df.dropna(subset=["datetime"])
-    df["year"] = df["datetime"].dt.year
-    df["month_num"] = df["datetime"].dt.month
+        df = df.dropna(subset=["datetime"])
+        df["year"] = df["datetime"].dt.year
+        df["month_num"] = df["datetime"].dt.month
 
-    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    df["month_cat"] = pd.Categorical(
-        df["month_num"].map(lambda m: month_labels[m - 1] if 1 <= m <= 12 else None),
-        categories=month_labels,
-        ordered=True,
-    )
+        month_labels = [
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
+        ]
+        df["month_cat"] = pd.Categorical(
+            df["month_num"].map(
+                lambda m: month_labels[m - 1] if 1 <= m <= 12 else None
+            ),
+            categories=month_labels,
+            ordered=True,
+        )
 
-    # Choose price column
-    if "standardized_price" in df.columns:
-        price_col = "standardized_price"
-    elif "weighted_avg_price" in df.columns:
-        price_col = "weighted_avg_price"
-    elif "charge" in df.columns:
-        price_col = "charge"
-    else:
-        price_col = None
-except Exception as e:
-    print(f"Error preparing risk data: {e}")
-    df = pd.DataFrame()
-    price_col = None
+        # Choose price column
+        if "standardized_price" in df.columns:
+            price_col = "standardized_price"
+        elif "weighted_avg_price" in df.columns:
+            price_col = "weighted_avg_price"
+        elif "charge" in df.columns:
+            price_col = "charge"
+        else:
+            price_col = None
+
+        return df, price_col
+
+    except Exception as e:
+        print(f"Error preparing risk data: {e}")
+        return pd.DataFrame(), None
 
 
 def _empty_fig(message="No data available"):
@@ -83,7 +111,11 @@ layout = html.Div(
             style={"marginBottom": "16px"},
             children=[
                 html.Div(
-                    style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
+                    style={
+                        "display": "flex",
+                        "justifyContent": "space-between",
+                        "alignItems": "center",
+                    },
                     children=[
                         html.Div(
                             children=[
@@ -97,8 +129,11 @@ layout = html.Div(
                         ),
                     ],
                 ),
-                # FIX: Constrain height
-                dcc.Graph(id="risk-heatmap", className="dash-graph", style={"height": "450px"}),
+                dcc.Graph(
+                    id="risk-heatmap",
+                    className="dash-graph",
+                    style={"height": "450px"},
+                ),
             ],
         ),
         # 2. Seasonal distribution card
@@ -106,29 +141,47 @@ layout = html.Div(
             className="glass-card",
             children=[
                 html.Div(
-                    style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
+                    style={
+                        "display": "flex",
+                        "justifyContent": "space-between",
+                        "alignItems": "center",
+                    },
                     children=[
                         html.Div(
                             children=[
-                                html.H3("Seasonal risk distribution", style={"marginTop": 0, "marginBottom": "4px"}),
+                                html.H3(
+                                    "Seasonal risk distribution",
+                                    style={"marginTop": 0, "marginBottom": "4px"},
+                                ),
                                 html.P(
                                     "Violin plots show the shape of the price distribution by month. Wider sections "
                                     "represent more common price ranges.",
                                     className="text-muted",
-                                    style={"fontSize": "0.9rem", "marginBottom": "0px"},
+                                    style={
+                                        "fontSize": "0.9rem",
+                                        "marginBottom": "0px",
+                                    },
                                 ),
                             ]
                         ),
                         dcc.Checklist(
                             id="violin-options",
-                            options=[{"label": " Show individual points", "value": "points"}],
+                            options=[
+                                {
+                                    "label": " Show individual points",
+                                    "value": "points",
+                                }
+                            ],
                             value=[],
                             style={"color": "#e5e7eb", "fontSize": "0.85rem"},
                         ),
                     ],
                 ),
-                # FIX: Constrain height
-                dcc.Graph(id="risk-violin", className="dash-graph", style={"height": "500px"}),
+                dcc.Graph(
+                    id="risk-violin",
+                    className="dash-graph",
+                    style={"height": "500px"},
+                ),
             ],
         ),
     ],
@@ -144,6 +197,8 @@ layout = html.Div(
     Input("violin-options", "value"),
 )
 def update_risk_plots(options):
+    df, price_col = get_risk_data()
+
     if df.empty or price_col is None:
         empty = _empty_fig()
         return empty, empty
