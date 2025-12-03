@@ -41,7 +41,7 @@ def load_master() -> pd.DataFrame:
             "Place EQR_master_clean_new.csv in the dashboard/data folder."
         )
 
-    # --- Allow row cap via env var to avoid OOM on Render ---
+    # Allow row cap via env var to avoid OOM on Render
     max_rows_env = os.environ.get("MAX_EQR_ROWS")
     read_kwargs = {"low_memory": False}
 
@@ -53,7 +53,6 @@ def load_master() -> pd.DataFrame:
             pass
 
     df = pd.read_csv(CLEAN_MASTER_PATH, **read_kwargs)
-    # --- End new part ---
 
     # Choose a date column
     dt = None
@@ -517,7 +516,7 @@ def get_forecast_dashboard_data() -> Dict[str, object]:
             },
             "comparison_df": comparison_df,
             "backtest_df": backtest_df,
-            "avg_backtest_mae": avg_backtest_mae,
+            "avg_backtest_mae": avg_mae_bt,
             "future_df": future_df,
             "scaler": scaler,
             "svr_model": svr_model,
