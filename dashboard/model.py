@@ -134,7 +134,7 @@ def build_monthly_dataset() -> Tuple[pd.DataFrame, List[str], List[str]]:
             "Expected 'trade_date_year_mo' in EQR_master_clean_new.csv for aggregation."
         )
 
-    # Only keep the columns needed for aggregation instead of copying the whole DF
+    # Only keep columns needed for aggregation
     tx = master[
         [
             "trade_date_year_mo",
@@ -200,8 +200,6 @@ def train_forecast_models() -> Dict[str, object]:
     Train the monthly forecasting models (SVR baseline, tuned SVR, Random Forest),
     perform a 12-month holdout test, a rolling backtest (Ridge), and build
     12-month ahead forecasts.
-
-    This is intended to be run offline (see train_models.py).
     """
     data, feature_cols, target_cols = build_monthly_dataset()
 
@@ -389,8 +387,7 @@ def train_forecast_models() -> Dict[str, object]:
         "backtest_df": backtest_df,
         "avg_backtest_mae": avg_mae_bt,
         "future_df": future_df,
-
-        # Models + scaler so you can use them later if needed
+        # Models + scaler so you can use them later (e.g. scenario lab)
         "scaler": scaler,
         "svr_model": best_svr,
         "rf_model": multi_rf,
@@ -399,16 +396,42 @@ def train_forecast_models() -> Dict[str, object]:
     return result
 
 
+# -------------------------------------------------------------------------
+# Dash-facing helper
+# -------------------------------------------------------------------------
+
 @lru_cache(maxsize=1)
 def get_forecast_dashboard_data() -> Dict[str, object]:
     """
-    Convenience wrapper for Dash pages: loads cached forecast results
-    from disk. Training is done offline via train_models.py.
+    Load forecast results (and models) for Dash.
+
+    If a pretrained artifact exists on disk, load it.
+    Otherwise, train the models on the fly and (if possible) save them.
     """
     models_path = os.path.join(DATA_DIR, "forecast_models.joblib")
-    if not os.path.exists(models_path):
-        raise FileNotFoundError(
-            f"Pretrained model file not found at {models_path}. "
-            "Run train_models.py once to train and save models."
+
+    # 1) Try loading a pre-trained artifact
+    if os.path.exists(models_path):
+        try:
+            return joblib.load(models_path)
+        except Exception as e:
+            print(
+                f"[model.py] Warning: could not load pretrained artifact at "
+                f"{models_path}: {e}. Retraining instead..."
+            )
+
+    # 2) Fallback: train on the fly
+    print(f"[model.py] No usable pretrained artifact at {models_path}. Training models now...")
+    result = train_forecast_models()
+
+    # Try to save for future use (local dev, or if filesystem allows writes)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        joblib.dump(result, models_path)
+        print(f"[model.py] Saved trained models to {models_path}")
+    except Exception as e:
+        print(
+            f"[model.py] Warning: could not save model artifact to {models_path}: {e}"
         )
-    return joblib.load(models_path)
+
+    return result
