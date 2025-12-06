@@ -2,9 +2,6 @@ import os
 import dash
 from dash import html, dcc
 
-# Initialize the app with Multi-Page support
-# suppress_callback_exceptions=True is crucial for multi-page apps because
-# content is loaded dynamically, and callbacks might target IDs that don't exist yet.
 app = dash.Dash(
     __name__, 
     use_pages=True, 
@@ -25,17 +22,9 @@ app.layout = html.Div([
                 children=[
                     # 1. LOGO / BRAND (Left Side)
                     dcc.Link(
-                        "GRID SENTINEL",
+                        "TABS",
                         href="/",
-                        style={
-                            "fontFamily": "Orbitron, sans-serif",
-                            "fontWeight": "700",
-                            "fontSize": "1.3rem",
-                            "color": "var(--text-main)",
-                            "textDecoration": "none",
-                            "letterSpacing": "0.15em",
-                            "textShadow": "0 0 15px rgba(34, 211, 238, 0.4)"
-                        }
+                        className= "nav-brand",
                     ),
 
                     # 2. NAVIGATION TABS (Right Side)
@@ -68,4 +57,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
     debug = os.environ.get("DEBUG", "True").lower() == "true"
     
-    app.run(debug=debug, host="0.0.0.0", port=port)
+    app.run(debug=False, host="0.0.0.0", port=port)
