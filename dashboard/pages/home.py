@@ -43,7 +43,7 @@ layout = html.Div(
             className="glass-card",
             style={"marginBottom": "24px", "padding": "24px"},
             children=[
-                html.H2("Start Exploring"),
+                html.H2("Start Exploring", style={"textAlign": "center"}),
                 html.Div(
                     style={
                         "display": "grid",
