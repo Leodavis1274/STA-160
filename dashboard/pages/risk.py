@@ -7,10 +7,6 @@ from functools import lru_cache
 
 from model import load_master
 
-#dash.register_page(__name__, path="/risk", name="Risk Analysis")
-
-# --- Data preparation -----------------------------------------------------
-
 
 @lru_cache(maxsize=1)
 def get_risk_data():

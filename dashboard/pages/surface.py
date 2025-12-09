@@ -87,12 +87,6 @@ else:
 
 DEFAULT_YEAR_VALUE = -1
 
-
-# -------------------------------------------------------------------------
-# Figure builder
-# -------------------------------------------------------------------------
-
-
 @lru_cache(maxsize=16)
 def build_surface_figure(selected_year: int | None = None):
     """

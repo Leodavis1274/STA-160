@@ -21,11 +21,11 @@ app.layout = html.Div([
                 className="navbar-inner",
                 children=[
                     # 1. LOGO / BRAND (Left Side)
-                    dcc.Link(
-                        "TABS",
-                        href="/",
-                        className= "nav-brand",
-                    ),
+                    #dcc.Link(
+                        #"TABS",
+                        #href="/",
+                        #className= "nav-brand",
+                    #),
 
                     # 2. NAVIGATION TABS (Right Side)
                     # We wrap these in 'nav-links' to apply the Flexbox gap from CSS

@@ -5,12 +5,6 @@ import plotly.graph_objects as go
 from pathlib import Path
 from functools import lru_cache
 
-#dash.register_page(__name__, path="/eda", name="Exploratory Analysis")
-
-# -------------------------------------------------------------------------
-# Helpers
-# -------------------------------------------------------------------------
-
 
 def _empty_fig(message="No data available"):
     fig = go.Figure()
